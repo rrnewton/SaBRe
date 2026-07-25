@@ -20,13 +20,23 @@
 
 static long raw_write(void) {
   static const char msg[] = "ordinary ld client\n";
+#if defined(__x86_64__)
   long result;
-
   __asm__ volatile("syscall"
                    : "=a"(result)
                    : "a"(1), "D"(1), "S"(msg), "d"(sizeof(msg) - 1)
                    : "rcx", "r11", "memory");
   return result;
+#elif defined(__riscv)
+  register long a0 __asm__("a0") = 1;
+  register const char *a1 __asm__("a1") = msg;
+  register size_t a2 __asm__("a2") = sizeof(msg) - 1;
+  register long a7 __asm__("a7") = 64;
+  __asm__ volatile("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+  return a0;
+#else
+#error "unsupported architecture"
+#endif
 }
 
 int main(void) { return raw_write() < 0; }
