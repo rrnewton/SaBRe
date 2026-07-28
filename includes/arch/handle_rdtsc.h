@@ -11,5 +11,6 @@
 #include "compiler.h"
 
 void rdtsc_entrypoint(void) __internal;
+void rdtscp_entrypoint(void) __internal;
 
 #endif /* !HANDLE_RDTSC_H */

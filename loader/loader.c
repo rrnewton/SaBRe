@@ -17,6 +17,7 @@
 #include <malloc.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -87,6 +88,7 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
   assert(sig == SIGILL);
   ucontext_t *ctx = ucontext;
   uint16_t faulting_insn = *(uint16_t *)info->si_addr;
+  size_t instruction_len = 2;
   // WARNING endianness
   if (faulting_insn == 0xFF0F) { // syscall
     // call syscall handler with proper arguments
@@ -99,8 +101,16 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
         regs[REG_RAX], regs[REG_RDI], regs[REG_RSI], regs[REG_RDX],
         regs[REG_R10], regs[REG_R8], regs[REG_R9], wrapper_sp);
 #ifdef __NX_INTERCEPT_RDTSC
-  } else if (faulting_insn == 0x0B0F) { // RDTSC
-    plugin_rdtsc_handler();
+  } else if (faulting_insn == 0x0B0F || // RDTSC marker
+             faulting_insn == 0x0C0F) { // RDTSCP marker
+    greg_t *regs = ctx->uc_mcontext.gregs;
+    uint64_t tsc = (uint64_t)plugin_rdtsc_handler();
+    regs[REG_RAX] = (uint32_t)tsc;
+    regs[REG_RDX] = (uint32_t)(tsc >> 32);
+    if (faulting_insn == 0x0C0F) {
+      regs[REG_RCX] = 0;
+      instruction_len = 3;
+    }
 #endif
   } else {
     // not from SaBRe, so use default handler
@@ -116,7 +126,7 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
   }
 
   // Skip UD insn to point to return address
-  ctx->uc_mcontext.gregs[REG_RIP] += 2;
+  ctx->uc_mcontext.gregs[REG_RIP] += instruction_len;
 }
 #elif defined __riscv
 static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {

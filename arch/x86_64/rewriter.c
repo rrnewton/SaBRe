@@ -113,10 +113,16 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
     // code that redirects to our system call entrypoint.
 #if defined(__NX_INTERCEPT_RDTSC) || defined(SBR_DEBUG)
     bool is_rdtsc = false;
+    bool is_rdtscp = false;
 #endif
     if (code[i].insn == 0x0F05 /* SYSCALL */
 #ifdef __NX_INTERCEPT_RDTSC
         || ((is_rdtsc = (code[i].insn == 0x0F31)) /* RDTSC */ && !loader)
+        // AUTONOMOUS-BOT-IMPLEMENTED
+        || ((is_rdtscp =
+                 code[i].insn == 0x0F01 && code[i].len == 3 &&
+                 (unsigned char)code[i].addr[2] == 0xF9) /* RDTSCP */ &&
+            !loader)
 #endif
     ) {
 
@@ -246,7 +252,10 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
         // handle in the signal handler. That's a lot slower than rewriting the
         // instruction with a jump, but it should only happen very rarely.
 #ifdef __NX_INTERCEPT_RDTSC
-        if (is_rdtsc) {
+        if (is_rdtscp) {
+          memcpy(code[i].addr, "\x0F\x0C\x90" /* Reserved UD + NOP */, 3);
+          goto replaced;
+        } else if (is_rdtsc) {
           memcpy(code[i].addr, "\x0F\x0B" /* UD2 */, 2);
           goto replaced;
         } else
@@ -321,8 +330,8 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       if (loader)
         entrypoint = handle_syscall_loader;
 #ifdef __NX_INTERCEPT_RDTSC
-      else if (is_rdtsc) {
-        entrypoint = rdtsc_entrypoint;
+      else if (is_rdtsc || is_rdtscp) {
+        entrypoint = is_rdtscp ? rdtscp_entrypoint : rdtsc_entrypoint;
       }
 #endif
       else
@@ -336,7 +345,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       *code[first].addr = '\xE9'; // JMPQ
       *(int *)(code[first].addr + 1) = dest - (code[first].addr + 5);
       _nx_debug_printf("patched %s at %p (scratch space at %p)\n",
-                       (is_rdtsc ? "rdtsc" : "syscall"), code[i].addr, dest);
+                       (is_rdtscp ? "rdtscp"
+                                  : (is_rdtsc ? "rdtsc" : "syscall")),
+                       code[i].addr, dest);
     }
   replaced:
     i = (i + 1) % (sizeof(code) / sizeof(struct code));
@@ -877,13 +888,20 @@ void patch_syscalls_in_range(struct library *lib, char *start, char *stop,
   int nopcount = 0;
   bool has_syscall = false;
   for (char *ptr = start; ptr < stop; ptr++) {
-    if ((*ptr == '\x0F' && ptr[1] == '\x05' /* SYSCALL */) ||
+    bool is_rdtscp =
+        ptr + 2 < stop && *ptr == '\x0F' && ptr[1] == '\x01' &&
+        ptr[2] == '\xF9';
+    if ((ptr + 1 < stop && *ptr == '\x0F' &&
+         ptr[1] == '\x05' /* SYSCALL */) ||
         (lib->vdso && *ptr == '\xFF')
 #ifdef __NX_INTERCEPT_RDTSC
-        || (*ptr == '\x0F' && ptr[1] == '\x31' /* RDTSC */)
+        || (ptr + 1 < stop && *ptr == '\x0F' &&
+            ptr[1] == '\x31' /* RDTSC */)
+        // AUTONOMOUS-BOT-IMPLEMENTED
+        || is_rdtscp
 #endif
     ) {
-      ptr++;
+      ptr += is_rdtscp ? 2 : 1;
       has_syscall = true;
       nopcount = 0;
     } else if (*ptr == '\x90' /* NOP */) {

@@ -6,7 +6,7 @@
  */
 
 /*
- * RUN: %{cc} -nostdlib -nostartfiles %s -o %t1
+ * RUN: %{cc} -nostdlib -nostartfiles -Wl,--no-as-needed -lc %s -o %t1
  * RUN: %{sbr} %{sbr-id} -- %t1
  */
 
@@ -31,6 +31,9 @@ nop
 2:
 nop	/* destination of jump 2 */
 rdtsc	/* RDTSC instruction cannot be rewritten with jump*/
+lea 0(%rip), %rax	/* PC-relative addressing => non relocatable */
+nop
+rdtscp	/* RDTSCP instruction cannot be rewritten with jump*/
 lea 0(%rip), %rax	/* PC-relative addressing => non relocatable */
 nop
 nop
