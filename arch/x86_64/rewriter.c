@@ -324,8 +324,10 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       dest[post] = '\xE9'; // JMPQ
       *(int *)(dest + post + 1) =
           (code[second].addr + code[second].len) - (dest + post + 5);
+      // Preserve the architectural SYSCALL return RIP separately from the
+      // scratch continuation that executes the relocated postamble.
       *(int *)(dest + preamble + 11) =
-          (code[second].addr + code[second].len) - (dest + preamble + 15);
+          (code[i].addr + code[i].len) - (dest + preamble + 15);
       void *entrypoint;
 
       if (loader)
