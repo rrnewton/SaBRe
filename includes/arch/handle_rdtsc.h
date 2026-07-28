@@ -11,6 +11,7 @@
 #include "compiler.h"
 
 void rdtsc_entrypoint(void) __internal;
+// TODO-HUMAN-REVIEW(PR-2): Review the dedicated RDTSCP trampoline ABI.
 void rdtscp_entrypoint(void) __internal;
 
 #endif /* !HANDLE_RDTSC_H */

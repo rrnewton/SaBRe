@@ -101,6 +101,7 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
         regs[REG_RAX], regs[REG_RDI], regs[REG_RSI], regs[REG_RDX],
         regs[REG_R10], regs[REG_R8], regs[REG_R9], wrapper_sp);
 #ifdef __NX_INTERCEPT_RDTSC
+  // TODO-HUMAN-REVIEW(PR-2): Review deterministic RDTSCP SIGILL restoration.
   } else if (faulting_insn == 0x0B0F || // RDTSC marker
              faulting_insn == 0x0C0F) { // RDTSCP marker
     greg_t *regs = ctx->uc_mcontext.gregs;

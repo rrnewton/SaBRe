@@ -119,6 +119,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #ifdef __NX_INTERCEPT_RDTSC
         || ((is_rdtsc = (code[i].insn == 0x0F31)) /* RDTSC */ && !loader)
         // AUTONOMOUS-BOT-IMPLEMENTED
+        // TODO-HUMAN-REVIEW(PR-2): Review RDTSCP decoding and rewrite semantics.
         || ((is_rdtscp =
                  code[i].insn == 0x0F01 && code[i].len == 3 &&
                  (unsigned char)code[i].addr[2] == 0xF9) /* RDTSCP */ &&
@@ -898,6 +899,7 @@ void patch_syscalls_in_range(struct library *lib, char *start, char *stop,
         || (ptr + 1 < stop && *ptr == '\x0F' &&
             ptr[1] == '\x31' /* RDTSC */)
         // AUTONOMOUS-BOT-IMPLEMENTED
+        // TODO-HUMAN-REVIEW(PR-2): Review RDTSCP quick-scan classification.
         || is_rdtscp
 #endif
     ) {
