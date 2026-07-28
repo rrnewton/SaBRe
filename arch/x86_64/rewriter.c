@@ -194,6 +194,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // x86-64, we can instead use a 32bit JMPQ.
       //
       // .. .. .. .. ; any leading instructions copied from original code
+      // 9C                          PUSHFQ              ; SYSCALL only
+      // 41 5B                       POP %r11            ; SYSCALL only
+      // 48 8D 0D .. .. .. ..        LEA return(%rip), %rcx ; SYSCALL only
       // 48 81 EC 80 00 00 00        SUB  $0x80, %rsp
       // 50                          PUSH %rax
       // 48 8D 05 .. .. .. ..        LEA  ...(%rip), %rax
@@ -208,7 +211,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // .. .. .. .. ; any trailing instructions copied from original code
       // E9 .. .. .. ..              JMPQ ...
       //
-      // Total: 52 bytes + any bytes that were copied
+      // Total: 62 bytes for SYSCALL (52 for RDTSC/RDTSCP) + copied bytes
       //
       // On x86-32, the stack is available and we can do:
       //
@@ -284,7 +287,8 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 
       // The following is all the code that construct the various bits of
       // assembly code.
-      needed = 52 + preamble + postamble;
+      int syscall_clobber_prefix = code[i].insn == 0x0F05 ? 10 : 0;
+      needed = 52 + syscall_clobber_prefix + preamble + postamble;
 
       // Allocate scratch space and copy the preamble of code that was moved
       // from the function that we are patching.
@@ -301,7 +305,18 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       }
 
       // Copy the static body of the assembly code.
-      memcpy(dest + preamble,
+      char *body = dest + preamble;
+      if (syscall_clobber_prefix) {
+        memcpy(body,
+               "\x9C"                         // PUSHFQ
+               "\x41\x5B"                     // POP %r11
+               "\x48\x8D\x0D\x00\x00\x00\x00", // LEA ...(%rip), %rcx
+               syscall_clobber_prefix);
+        *(int *)(body + 6) =
+            (code[i].addr + code[i].len) - (body + syscall_clobber_prefix);
+        body += syscall_clobber_prefix;
+      }
+      memcpy(body,
              "\x48\x81\xEC\x80\x00\x00\x00" // SUB  $0x80, %rsp
              "\x50"                         // PUSH %rax
              "\x48\x8D\x05\x00\x00\x00\x00" // LEA  ...(%rip), %rax
@@ -317,17 +332,16 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 
       // Copy the postamble that was moved from the function that we are
       // patching.
-      memcpy(dest + preamble + 47, code[i].addr + code[i].len, postamble);
+      memcpy(body + 47, code[i].addr + code[i].len, postamble);
 
       // Patch up the various computed values
-      int post = preamble + 47 + postamble;
+      int post = preamble + syscall_clobber_prefix + 47 + postamble;
       dest[post] = '\xE9'; // JMPQ
       *(int *)(dest + post + 1) =
           (code[second].addr + code[second].len) - (dest + post + 5);
       // Preserve the architectural SYSCALL return RIP separately from the
       // scratch continuation that executes the relocated postamble.
-      *(int *)(dest + preamble + 11) =
-          (code[i].addr + code[i].len) - (dest + preamble + 15);
+      *(int *)(body + 11) = (code[i].addr + code[i].len) - (body + 15);
       void *entrypoint;
 
       if (loader)
@@ -339,7 +353,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #endif
       else
         entrypoint = handle_syscall;
-      *(void **)(dest + preamble + 18) = entrypoint;
+      *(void **)(body + 18) = entrypoint;
       // Pad unused space in the original function with NOPs
       memset(code[first].addr, 0x90 /* NOP */,
              code[second].addr + code[second].len - code[first].addr);
