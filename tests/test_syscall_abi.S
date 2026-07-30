@@ -54,6 +54,9 @@ _start:
   call test_sigill_syscall
   test %eax, %eax
   jnz fail_sigill
+  call test_sigill_resume_flags
+  test %eax, %eax
+  jnz fail_sigill_resume_flags
 
   xor %edi, %edi
   jmp exit
@@ -62,6 +65,10 @@ fail_rewritten:
   jmp exit
 fail_sigill:
   add $32, %eax
+  mov %eax, %edi
+  jmp exit
+fail_sigill_resume_flags:
+  add $64, %eax
   mov %eax, %edi
 exit:
   mov $60, %eax /* __NR_exit */
@@ -89,6 +96,35 @@ test_sigill_syscall:
   snapshot_syscall
   jmp check_snapshot
 .size test_sigill_syscall, .-test_sigill_syscall
+
+.type test_sigill_resume_flags, @function
+test_sigill_resume_flags:
+  mov $1, %rax
+  cmp $2, %rax
+  std
+  pushfq
+  pop %r12
+  mov %r12, expected_flags(%rip)
+  mov $39, %rax /* __NR_getpid */
+  jmp .Lsigill_resume_site
+  nop
+  nop
+.Lsigill_resume_site:
+  syscall
+.Lsigill_resume_return:
+  /* This must be the first resumed instruction so an injected RF is visible. */
+  pushfq
+  pop observed_resume_flags(%rip)
+  cld
+  mov observed_resume_flags(%rip), %rax
+  cmp expected_flags(%rip), %rax
+  jne bad_resume_flags
+  xor %eax, %eax
+  ret
+bad_resume_flags:
+  mov $1, %eax
+  ret
+.size test_sigill_resume_flags, .-test_sigill_resume_flags
 
 .type check_snapshot, @function
 check_snapshot:
@@ -132,5 +168,6 @@ observed_r11: .zero 8
 observed_rbx: .zero 8
 observed_redzone_top: .zero 8
 observed_redzone_bottom: .zero 8
+observed_resume_flags: .zero 8
 
 .section .note.GNU-stack,"",@progbits

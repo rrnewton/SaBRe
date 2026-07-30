@@ -90,7 +90,7 @@ handle_syscall:
   # Align the stack on a 16-byte boundary before the call
   push %rbp
   mov %rsp, %rbp
-  .cfi_adjust_cfa_offset 0x68
+  .cfi_adjust_cfa_offset 0x70
   and $0xfffffffffffffff0, %rsp
 
   # Adjust the arguments

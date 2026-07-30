@@ -100,6 +100,7 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
     // Fault delivery sets RF in the saved frame so the faulting instruction
     // can be resumed. It was not present in the guest's pre-SYSCALL flags.
     greg_t syscall_rflags = regs[REG_EFL] & ~X86_EFLAGS_RF;
+    regs[REG_EFL] = syscall_rflags;
     // simulate a syscall stack frame, as would be built by handle_syscall
     void *wrapper_sp =
         (void *)((intptr_t)&ret_addr - get_offsetof_syscall_return_address());
