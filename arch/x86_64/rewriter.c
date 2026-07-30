@@ -435,13 +435,16 @@ static inline struct rb_root *lookup_branch_targets(char *start, char *end) {
   5 // 1 byte for the opcode + 4 bytes for the 32-bit displacement
 #endif
 
+// At the detoured function entry, arg7 is at 8(%rsp). Copy it while aligning
+// the stack so CALL places that copy at 8(%rsp) in the handler's SysV frame.
+// Current API detours use at most this one stack-passed argument.
 static const char DETOUR_ASM[] =
     // after rewriting, the detoured function jumps to here
-    "\x48\x83\xEC\x08"             // SUB  $0x8, %rsp          # stack alignment
+    "\xFF\x74\x24\x08"             // PUSHQ 8(%rsp) # copy arg7 + align stack
     "\x49\xBB\x00\x00\x00\x00\x00" // MOVABS $handler, %r11    # load handler address
     "\x00\x00\x00"
     "\x41\xFF\xD3"     // CALLQ *%r11              # call handler
-    "\x48\x83\xC4\x08" // ADD  $0x8, %rsp          # stack alignment
+    "\x48\x83\xC4\x08" // ADD  $0x8, %rsp          # discard copied arg7
     "\xC3"; // RETQ                     # return to detoured function (except for __libc_start_main)
 // the postamble (i.e. first instructions of detoured function relocated to accommodate the jump) comes here
 // then comes the jump back to detoured function after relocated instructions
