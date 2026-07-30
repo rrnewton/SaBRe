@@ -17,6 +17,10 @@ rdtsc_entrypoint:
   .cfi_offset rip, -0x88
   .cfi_remember_state
 
+  # RDTSC leaves RFLAGS unchanged. Save them before stack alignment or the
+  # plugin call can alter them, and restore them immediately before returning.
+  pushfq
+
   # Prologue
   push %rbp
   .cfi_adjust_cfa_offset 8
@@ -54,7 +58,7 @@ rdtsc_entrypoint:
   and %r15, %rax
   shr $32, %rdx
   and %r15, %rdx
-  mov %rdx, 88(%rsp) # Save rdx on right position on the stack
+  mov %rdx, 88(%rbp) # Save rdx in its stable slot above the aligned stack
 
   # Restore the stack
   mov %rbp, %rsp
@@ -79,7 +83,8 @@ rdtsc_entrypoint:
   # Epilogue
   pop %rbp
   .cfi_restore_state
-  addq $8, %rsp	# drop fake return address
+  popfq
+  leaq 8(%rsp), %rsp # drop fake return address without changing RFLAGS
   .cfi_undefined rip
   ret
   .cfi_endproc
@@ -94,6 +99,10 @@ rdtscp_entrypoint:
   .cfi_def_cfa rsp, 0x88
   .cfi_offset rip, -0x88
   .cfi_remember_state
+
+  # RDTSCP leaves RFLAGS unchanged. Save them before stack alignment or the
+  # plugin call can alter them, and restore them immediately before returning.
+  pushfq
 
   # Prologue
   push %rbp
@@ -132,7 +141,7 @@ rdtscp_entrypoint:
   and %r15, %rax
   shr $32, %rdx
   and %r15, %rdx
-  mov %rdx, 88(%rsp) # Save rdx on right position on the stack
+  mov %rdx, 88(%rbp) # Save rdx in its stable slot above the aligned stack
 
   # Restore the stack
   mov %rbp, %rsp
@@ -152,13 +161,14 @@ rdtscp_entrypoint:
   popq %rsi
   popq %rdx
   popq %rcx
-  xor %ecx, %ecx
+  mov $0, %ecx
   popq %rbx
 
   # Epilogue
   pop %rbp
   .cfi_restore_state
-  addq $8, %rsp # drop fake return address
+  popfq
+  leaq 8(%rsp), %rsp # drop fake return address without changing RFLAGS
   .cfi_undefined rip
   ret
   .cfi_endproc

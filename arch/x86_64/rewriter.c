@@ -49,6 +49,24 @@ static inline bool is_safe_insn(unsigned short insn) {
 
 #define TRAMPOLINE_MAX_DISTANCE (1536 << 20)
 
+#ifdef __NX_INTERCEPT_RDTSC
+static bool rdtscp_prefixes_supported(const char *start, const char *mod_rm) {
+  if (mod_rm < start + 2 || (unsigned char)mod_rm[-2] != 0x0F ||
+      (unsigned char)mod_rm[-1] != 0x01)
+    return false;
+
+  // Operand-size and REX prefixes are architecturally ignored by RDTSCP but
+  // accepted by x86 CPUs. Reject every other prefix explicitly rather than
+  // turning an invalid native encoding (notably LOCK) into an intercepted one.
+  for (const unsigned char *prefix = (const unsigned char *)start;
+       prefix < (const unsigned char *)mod_rm - 2; ++prefix) {
+    if (*prefix != 0x66 && (*prefix < 0x40 || *prefix > 0x4F))
+      return false;
+  }
+  return true;
+}
+#endif
+
 static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
                                    char **extra_space, int *extra_len,
                                    bool loader) {
@@ -120,9 +138,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
         || ((is_rdtsc = (code[i].insn == 0x0F31)) /* RDTSC */ && !loader)
         // AUTONOMOUS-BOT-IMPLEMENTED
         // TODO-HUMAN-REVIEW(PR-2): Review RDTSCP decoding and rewrite semantics.
-        || ((is_rdtscp =
-                 code[i].insn == 0x0F01 && code[i].len == 3 &&
-                 (unsigned char)code[i].addr[2] == 0xF9) /* RDTSCP */ &&
+        || ((is_rdtscp = code[i].insn == 0x0F01 && mod_rm != NULL &&
+                         (unsigned char)*mod_rm == 0xF9 &&
+                         rdtscp_prefixes_supported(code[i].addr, mod_rm)) &&
             !loader)
 #endif
     ) {
@@ -194,7 +212,8 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // x86-64, we can instead use a 32bit JMPQ.
       //
       // .. .. .. .. ; any leading instructions copied from original code
-      // 48 81 EC 80 00 00 00        SUB  $0x80, %rsp
+      // 48 8D 64 24 80              LEA  -0x80(%rsp), %rsp
+      // 90 90                       NOP; NOP
       // 50                          PUSH %rax
       // 48 8D 05 .. .. .. ..        LEA  ...(%rip), %rax
       // 50                          PUSH %rax
@@ -204,11 +223,11 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // 48 8D 05 06 00 00 00        LEA  6(%rip), %rax
       // 48 87 44 24 10              XCHG %rax, 16(%rsp)
       // C3                          RETQ
-      // 48 81 C4 80 00 00 00        ADD  $0x80, %rsp
+      // 48 8D A4 24 80 00 00 00     LEA  0x80(%rsp), %rsp
       // .. .. .. .. ; any trailing instructions copied from original code
       // E9 .. .. .. ..              JMPQ ...
       //
-      // Total: 52 bytes + any bytes that were copied
+      // Total: 53 bytes + any bytes that were copied
       //
       // On x86-32, the stack is available and we can do:
       //
@@ -255,6 +274,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #ifdef __NX_INTERCEPT_RDTSC
         if (is_rdtscp) {
           memcpy(code[i].addr, "\x0F\x0C\x90" /* Reserved UD + NOP */, 3);
+          // A supported prefix makes the decoded instruction longer than the
+          // three-byte marker. Resume only through NOPs, never a stale opcode.
+          memset(code[i].addr + 3, 0x90, code[i].len - 3);
           goto replaced;
         } else if (is_rdtsc) {
           memcpy(code[i].addr, "\x0F\x0B" /* UD2 */, 2);
@@ -284,7 +306,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 
       // The following is all the code that construct the various bits of
       // assembly code.
-      needed = 52 + preamble + postamble;
+      needed = 53 + preamble + postamble;
 
       // Allocate scratch space and copy the preamble of code that was moved
       // from the function that we are patching.
@@ -302,7 +324,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 
       // Copy the static body of the assembly code.
       memcpy(dest + preamble,
-             "\x48\x81\xEC\x80\x00\x00\x00" // SUB  $0x80, %rsp
+             "\x48\x8D\x64\x24\x80\x90\x90" // LEA -0x80(%rsp),%rsp; NOPs
              "\x50"                         // PUSH %rax
              "\x48\x8D\x05\x00\x00\x00\x00" // LEA  ...(%rip), %rax
              "\x50"                         // PUSH %rax
@@ -312,15 +334,15 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
              "\x48\x8D\x05\x06\x00\x00\x00" // LEA  6(%rip), %rax
              "\x48\x87\x44\x24\x10"         // XCHG %rax, 16(%rsp)
              "\xC3"                         // RETQ
-             "\x48\x81\xC4\x80\x00\x00",    // ADD  $0x80, %rsp
-             47);
+             "\x48\x8D\xA4\x24\x80\x00\x00\x00", // LEA 0x80(%rsp), %rsp
+             48);
 
       // Copy the postamble that was moved from the function that we are
       // patching.
-      memcpy(dest + preamble + 47, code[i].addr + code[i].len, postamble);
+      memcpy(dest + preamble + 48, code[i].addr + code[i].len, postamble);
 
       // Patch up the various computed values
-      int post = preamble + 47 + postamble;
+      int post = preamble + 48 + postamble;
       dest[post] = '\xE9'; // JMPQ
       *(int *)(dest + post + 1) =
           (code[second].addr + code[second].len) - (dest + post + 5);
