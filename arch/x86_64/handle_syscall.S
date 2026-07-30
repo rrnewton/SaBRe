@@ -18,7 +18,6 @@ handle_syscall:
   .cfi_startproc
   .cfi_def_cfa rsp, 0x88
   .cfi_offset rip, -0x88
-  .cfi_remember_state
 
 
   # Check for rt_sigreturn(). It needs to be handled specially.
@@ -57,6 +56,13 @@ handle_syscall:
   jmp  0b
 
   1:
+  # The rewrite records the guest's pre-SYSCALL RFLAGS in r11. Save those
+  # flags for architectural restoration and clear DF across the C/Rust call.
+  pushq %r11
+  .cfi_adjust_cfa_offset 8
+  .cfi_remember_state
+  cld
+
   # Prologue
   push %rbp
   .cfi_adjust_cfa_offset 8
@@ -84,7 +90,7 @@ handle_syscall:
   # Align the stack on a 16-byte boundary before the call
   push %rbp
   mov %rsp, %rbp
-  .cfi_adjust_cfa_offset 0x68
+  .cfi_adjust_cfa_offset 0x70
   and $0xfffffffffffffff0, %rsp
 
   # Adjust the arguments
@@ -126,7 +132,9 @@ handle_syscall:
   # Epilogue
   pop %rbp
   .cfi_restore_state
-  addq $8, %rsp	# drop fake return address
+  popfq
+  .cfi_adjust_cfa_offset -8
+  leaq 8(%rsp), %rsp # drop fake return address without changing RFLAGS
   .cfi_undefined rip
   ret
   .cfi_endproc

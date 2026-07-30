@@ -214,6 +214,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // .. .. .. .. ; any leading instructions copied from original code
       // 48 8D 64 24 80              LEA  -0x80(%rsp), %rsp
       // 90 90                       NOP; NOP
+      // 9C                          PUSHFQ              ; SYSCALL only
+      // 41 5B                       POP %r11            ; SYSCALL only
+      // 48 8D 0D .. .. .. ..        LEA return(%rip), %rcx ; SYSCALL only
       // 50                          PUSH %rax
       // 48 8D 05 .. .. .. ..        LEA  ...(%rip), %rax
       // 50                          PUSH %rax
@@ -227,7 +230,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // .. .. .. .. ; any trailing instructions copied from original code
       // E9 .. .. .. ..              JMPQ ...
       //
-      // Total: 53 bytes + any bytes that were copied
+      // Total: 63 bytes for SYSCALL (53 for RDTSC/RDTSCP) + copied bytes
       //
       // On x86-32, the stack is available and we can do:
       //
@@ -306,7 +309,8 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 
       // The following is all the code that construct the various bits of
       // assembly code.
-      needed = 53 + preamble + postamble;
+      int syscall_clobber_prefix = code[i].insn == 0x0F05 ? 10 : 0;
+      needed = 53 + syscall_clobber_prefix + preamble + postamble;
 
       // Allocate scratch space and copy the preamble of code that was moved
       // from the function that we are patching.
@@ -323,31 +327,48 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       }
 
       // Copy the static body of the assembly code.
-      memcpy(dest + preamble,
-             "\x48\x8D\x64\x24\x80\x90\x90" // LEA -0x80(%rsp),%rsp; NOPs
-             "\x50"                         // PUSH %rax
-             "\x48\x8D\x05\x00\x00\x00\x00" // LEA  ...(%rip), %rax
-             "\x50"                         // PUSH %rax
-             "\x48\xB8\x00\x00\x00\x00\x00" // MOV $entrypoint,
-             "\x00\x00\x00"                 //     %rax
-             "\x50"                         // PUSH %rax
-             "\x48\x8D\x05\x06\x00\x00\x00" // LEA  6(%rip), %rax
-             "\x48\x87\x44\x24\x10"         // XCHG %rax, 16(%rsp)
-             "\xC3"                         // RETQ
+      char *body = dest + preamble;
+      memcpy(body,
+             "\x48\x8D\x64\x24\x80\x90\x90", // LEA -0x80(%rsp),%rsp; NOPs
+             7);
+      body += 7;
+      if (syscall_clobber_prefix) {
+        memcpy(body,
+               "\x9C"                          // PUSHFQ
+               "\x41\x5B"                      // POP %r11
+               "\x48\x8D\x0D\x00\x00\x00\x00", // LEA ...(%rip), %rcx
+               syscall_clobber_prefix);
+        *(int *)(body + 6) =
+            (code[i].addr + code[i].len) - (body + syscall_clobber_prefix);
+        body += syscall_clobber_prefix;
+      }
+      char *trampoline = body;
+      memcpy(trampoline,
+             "\x50"                              // PUSH %rax
+             "\x48\x8D\x05\x00\x00\x00\x00"      // LEA  ...(%rip), %rax
+             "\x50"                              // PUSH %rax
+             "\x48\xB8\x00\x00\x00\x00\x00"      // MOV $entrypoint,
+             "\x00\x00\x00"                      //     %rax
+             "\x50"                              // PUSH %rax
+             "\x48\x8D\x05\x06\x00\x00\x00"      // LEA  6(%rip), %rax
+             "\x48\x87\x44\x24\x10"              // XCHG %rax, 16(%rsp)
+             "\xC3"                              // RETQ
              "\x48\x8D\xA4\x24\x80\x00\x00\x00", // LEA 0x80(%rsp), %rsp
-             48);
+             41);
 
       // Copy the postamble that was moved from the function that we are
       // patching.
-      memcpy(dest + preamble + 48, code[i].addr + code[i].len, postamble);
+      memcpy(trampoline + 41, code[i].addr + code[i].len, postamble);
 
       // Patch up the various computed values
-      int post = preamble + 48 + postamble;
+      int post = trampoline - dest + 41 + postamble;
       dest[post] = '\xE9'; // JMPQ
       *(int *)(dest + post + 1) =
           (code[second].addr + code[second].len) - (dest + post + 5);
-      *(int *)(dest + preamble + 11) =
-          (code[second].addr + code[second].len) - (dest + preamble + 15);
+      // Preserve the architectural SYSCALL return RIP separately from the
+      // scratch continuation that executes the relocated postamble.
+      *(int *)(trampoline + 4) =
+          (code[i].addr + code[i].len) - (trampoline + 8);
       void *entrypoint;
 
       if (loader)
@@ -359,7 +380,7 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #endif
       else
         entrypoint = handle_syscall;
-      *(void **)(dest + preamble + 18) = entrypoint;
+      *(void **)(trampoline + 11) = entrypoint;
       // Pad unused space in the original function with NOPs
       memset(code[first].addr, 0x90 /* NOP */,
              code[second].addr + code[second].len - code[first].addr);
