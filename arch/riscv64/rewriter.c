@@ -691,6 +691,7 @@ void detour_func(struct library *lib, char *start, char *end, int sc_no,
 void api_detour_func(struct library *lib __unused, char *start __unused,
                      char *end __unused,
                      sbr_icept_callback_fn callback __unused,
+                     bool copy_first_stack_arg __unused,
                      char **extra_space __unused, int *extra_len __unused) {
   _nx_fatal_printf("api_detour_func is not implemented yet for RISC-V\n");
 }

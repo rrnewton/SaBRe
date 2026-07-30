@@ -63,15 +63,27 @@ enter_plugin_fn enter_plugin = NULL;
 exit_plugin_fn exit_plugin = NULL;
 is_vdso_ready_fn is_vdso_ready = NULL;
 
-void register_function_intercepts(const sbr_fn_icept_struct *r_struct) {
+static void register_function_intercept(const sbr_fn_icept_struct *r_struct,
+                                        bool copy_first_stack_arg) {
   assert(strlen(r_struct->lib_name) < MAX_ICEPT_STRLEN);
   assert(strlen(r_struct->fn_name) < MAX_ICEPT_STRLEN);
 
   strcpy(intercept_records[registered_icept_cnt].lib_name, r_struct->lib_name);
   strcpy(intercept_records[registered_icept_cnt].fn_name, r_struct->fn_name);
   intercept_records[registered_icept_cnt].callback = r_struct->icept_callback;
+  intercept_records[registered_icept_cnt].copy_first_stack_arg =
+      copy_first_stack_arg;
 
   ++registered_icept_cnt;
+}
+
+void register_function_intercepts(const sbr_fn_icept_struct *r_struct) {
+  register_function_intercept(r_struct, false);
+}
+
+void register_function_intercept_with_stack_arg(
+    const sbr_fn_icept_struct *r_struct) {
+  register_function_intercept(r_struct, true);
 }
 
 static void *find_auxv(void *argv) {

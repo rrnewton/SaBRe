@@ -330,7 +330,7 @@ void setup_sbr_premain(sbr_icept_reg_fn fn_icept_reg) {
                                     .fn_name = "_dl_map_object",
                                     .icept_callback =
                                         elf_deps_2_icept_callback};
-  fn_icept_reg(&elf_deps_2);
+  register_function_intercept_with_stack_arg(&elf_deps_2);
   sbr_fn_icept_struct vdso_guard = {.lib_name = "libc",
                                     .fn_name = "__clock_gettime",
                                     .icept_callback =

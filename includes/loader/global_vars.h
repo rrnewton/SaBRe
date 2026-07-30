@@ -19,6 +19,7 @@ typedef struct {
   char lib_name[MAX_ICEPT_STRLEN];
   char fn_name[MAX_ICEPT_STRLEN];
   sbr_icept_callback_fn callback;
+  bool copy_first_stack_arg;
 } sbr_fn_icept_local_struct;
 
 extern int plugin_argc;
@@ -42,5 +43,6 @@ extern is_vdso_ready_fn is_vdso_ready;
 extern const char *known_syscall_libs[];
 
 void register_function_intercepts(const sbr_fn_icept_struct *);
+void register_function_intercept_with_stack_arg(const sbr_fn_icept_struct *);
 
 #endif /* !GLOBAL_VARS_H */

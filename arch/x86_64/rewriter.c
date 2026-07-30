@@ -435,16 +435,13 @@ static inline struct rb_root *lookup_branch_targets(char *start, char *end) {
   5 // 1 byte for the opcode + 4 bytes for the 32-bit displacement
 #endif
 
-// At the detoured function entry, arg7 is at 8(%rsp). Copy it while aligning
-// the stack so CALL places that copy at 8(%rsp) in the handler's SysV frame.
-// Current API detours use at most this one stack-passed argument.
 static const char DETOUR_ASM[] =
     // after rewriting, the detoured function jumps to here
-    "\xFF\x74\x24\x08"             // PUSHQ 8(%rsp) # copy arg7 + align stack
+    "\x48\x83\xEC\x08"             // SUB  $0x8, %rsp          # stack alignment
     "\x49\xBB\x00\x00\x00\x00\x00" // MOVABS $handler, %r11    # load handler address
     "\x00\x00\x00"
     "\x41\xFF\xD3"     // CALLQ *%r11              # call handler
-    "\x48\x83\xC4\x08" // ADD  $0x8, %rsp          # discard copied arg7
+    "\x48\x83\xC4\x08" // ADD  $0x8, %rsp          # stack alignment
     "\xC3"; // RETQ                     # return to detoured function (except for __libc_start_main)
 // the postamble (i.e. first instructions of detoured function relocated to accommodate the jump) comes here
 // then comes the jump back to detoured function after relocated instructions
@@ -835,8 +832,8 @@ void detour_func(struct library *lib, char *start, char *end, int syscall_no,
 }
 
 void api_detour_func(struct library *lib, char *start, char *end,
-                     sbr_icept_callback_fn callback, char **extra_space,
-                     int *extra_len) {
+                     sbr_icept_callback_fn callback, bool copy_first_stack_arg,
+                     char **extra_space, int *extra_len) {
   void *trampoline_addr = NULL;
   struct rb_root *branch_targets;
   struct s_code code[JUMP_SIZE] = {{0}};
@@ -894,6 +891,12 @@ void api_detour_func(struct library *lib, char *start, char *end,
 #endif
 
   memcpy(dest, DETOUR_ASM, DETOUR_ASM_SIZE);
+  if (copy_first_stack_arg) {
+    // At function entry, arg7 is at 8(%rsp). Copy it while aligning so CALL
+    // places that value at 8(%rsp) in the handler's SysV frame. The four-byte
+    // replacement preserves every downstream template offset.
+    memcpy(dest, "\xFF\x74\x24\x08", 4); // PUSHQ 8(%rsp)
+  }
 
   // Copy the postamble that was moved from the function that we are
   // patching.
