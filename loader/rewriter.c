@@ -136,11 +136,16 @@ static inline struct region *rb_lower_bound_region(struct library *lib,
 static char *memcpy_fromlib(void *dst, const void *src, size_t len,
                             struct library *lib) {
   // Some kernels don't allow accessing the VDSO from write()
-  if (lib->vdso && src >= rb_entry_region(rb_first(&lib->rb_region))->start &&
-      src <= rb_entry_region(rb_first(&lib->rb_region))->end) {
-    ptrdiff_t max = rb_entry_region(rb_first(&lib->rb_region))->end - src;
-    memcpy(dst, src, clamp_val(len, 0, max));
-    return dst;
+  if (lib->vdso) {
+    struct rb_node *first_node = rb_first(&lib->rb_region);
+    if (first_node) {
+      struct region *first_region = rb_entry_region(first_node);
+      if (src >= first_region->start && src <= first_region->end) {
+        ptrdiff_t max = first_region->end - src;
+        memcpy(dst, src, clamp_val(len, 0, max));
+        return dst;
+      }
+    }
   }
 
   // Read up to "len" bytes from "src" and copy them to "dst". Short copies
