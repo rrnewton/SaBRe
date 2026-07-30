@@ -36,6 +36,7 @@ lea 0(%rip), %rax	/* PC-relative addressing => non relocatable */
 /* Set flags and non-output registers without changing the flags afterwards. */
 mov $1, %rax
 cmp $2, %rax
+std
 pushfq
 pop %r12
 mov $0x77, %r11
@@ -50,6 +51,37 @@ mov %rcx, fallback_rcx(%rip)
 mov %r11, fallback_r11(%rip)
 pushfq
 pop %r13
+cld
+
+cmp %r12, %r13
+jne fail
+cmpq $0, fallback_rcx(%rip)
+jne fail
+cmpq $0x77, fallback_r11(%rip)
+jne fail
+mov fallback_rax(%rip), %rax
+or fallback_rdx(%rip), %rax
+je fail
+
+/* Repeat with a valid operand-size prefix to cover the marker's NOP tail. */
+mov $1, %rax
+cmp $2, %rax
+std
+pushfq
+pop %r12
+mov $0x77, %r11
+jmp 4f
+nop
+nop
+4:
+.byte 0x66, 0x0f, 0x01, 0xf9
+mov %rax, fallback_rax(%rip)
+mov %rdx, fallback_rdx(%rip)
+mov %rcx, fallback_rcx(%rip)
+mov %r11, fallback_r11(%rip)
+pushfq
+pop %r13
+cld
 
 cmp %r12, %r13
 jne fail

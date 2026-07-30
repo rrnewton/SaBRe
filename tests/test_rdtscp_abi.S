@@ -16,6 +16,7 @@
   /* Establish flags first; every following setup instruction preserves them. */
   mov $1, %rax
   cmp $2, %rax
+  std
   pushfq
   pop %rax
   mov %rax, expected_flags(%rip)
@@ -52,6 +53,7 @@
   pushfq
   pop %rax
   mov %rax, observed_flags(%rip)
+  cld /* Keep the test harness itself SysV-compliant after taking the snapshot. */
 .endm
 
 .text

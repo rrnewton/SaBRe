@@ -15,11 +15,13 @@ rdtsc_entrypoint:
   .cfi_startproc
   .cfi_def_cfa rsp, 0x88
   .cfi_offset rip, -0x88
-  .cfi_remember_state
 
   # RDTSC leaves RFLAGS unchanged. Save them before stack alignment or the
   # plugin call can alter them, and restore them immediately before returning.
   pushfq
+  .cfi_adjust_cfa_offset 8
+  .cfi_remember_state
+  cld # C and Rust callbacks require a clear direction flag under SysV.
 
   # Prologue
   push %rbp
@@ -84,6 +86,7 @@ rdtsc_entrypoint:
   pop %rbp
   .cfi_restore_state
   popfq
+  .cfi_adjust_cfa_offset -8
   leaq 8(%rsp), %rsp # drop fake return address without changing RFLAGS
   .cfi_undefined rip
   ret
@@ -98,11 +101,13 @@ rdtscp_entrypoint:
   .cfi_startproc
   .cfi_def_cfa rsp, 0x88
   .cfi_offset rip, -0x88
-  .cfi_remember_state
 
   # RDTSCP leaves RFLAGS unchanged. Save them before stack alignment or the
   # plugin call can alter them, and restore them immediately before returning.
   pushfq
+  .cfi_adjust_cfa_offset 8
+  .cfi_remember_state
+  cld # C and Rust callbacks require a clear direction flag under SysV.
 
   # Prologue
   push %rbp
@@ -168,6 +173,7 @@ rdtscp_entrypoint:
   pop %rbp
   .cfi_restore_state
   popfq
+  .cfi_adjust_cfa_offset -8
   leaq 8(%rsp), %rsp # drop fake return address without changing RFLAGS
   .cfi_undefined rip
   ret
