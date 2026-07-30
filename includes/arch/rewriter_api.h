@@ -17,8 +17,8 @@ extern const size_t JUMP_SIZE;
 void patch_syscalls_in_range(struct library *lib, char *start, char *stop,
                              char **extra_space, int *extra_len, bool loader);
 void api_detour_func(struct library *lib, char *start, char *end,
-                     sbr_icept_callback_fn callback, char **extra_space,
-                     int *extra_len);
+                     sbr_icept_callback_fn callback, bool copy_first_stack_arg,
+                     char **extra_space, int *extra_len);
 void detour_func(struct library *lib, char *start, char *end, int syscall_no,
                  char **extra_space, int *extra_len);
 

@@ -628,7 +628,8 @@ static void patch_funcs(struct library *lib) {
                          (long)lib->asr_offset + sym->sym.st_value);
         api_detour_func(lib, lib->asr_offset + sym->sym.st_value,
                         lib->asr_offset + sym->sym.st_value + sym->sym.st_size,
-                        intercept_records[i].callback, &extra_space,
+                        intercept_records[i].callback,
+                        intercept_records[i].copy_first_stack_arg, &extra_space,
                         &extra_len);
       } else if (sym == NULL && !strcmp(short_libname, "ld")) {
         GElf_Sym gsym =
@@ -638,7 +639,8 @@ static void patch_funcs(struct library *lib) {
                          (long)lib->asr_offset + gsym.st_value);
         api_detour_func(lib, lib->asr_offset + gsym.st_value,
                         lib->asr_offset + gsym.st_value + gsym.st_size,
-                        intercept_records[i].callback, &extra_space,
+                        intercept_records[i].callback,
+                        intercept_records[i].copy_first_stack_arg, &extra_space,
                         &extra_len);
       }
     }

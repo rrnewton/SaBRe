@@ -278,16 +278,9 @@ void sbr_dl_map_object_deps(struct ld_link_map *map,
 }
 
 void *sbr_dl_map_object(struct link_map *loader, const char *name, int type,
-                        int trace_mode, int mode, Lmid_t nsid,
-                        void *BROKEN_ARG_DONT_USE) {
-  (void)BROKEN_ARG_DONT_USE; // unused
-
-  // TODO: There is a bug on passing more than 6 args in function detours.
-  void *arg7;
-  asm volatile("mov 0x20(%%rbp), %0;" : "=r"(arg7));
-
+                        int trace_mode, int mode, Lmid_t nsid, void *scope) {
   if (sbr_preinit_done)
-    real_dl_map_object(loader, name, type, trace_mode, mode, nsid, arg7);
+    real_dl_map_object(loader, name, type, trace_mode, mode, nsid, scope);
 
   static int counter = 0;
   if (ready_to_inject_plugin) {
@@ -298,7 +291,7 @@ void *sbr_dl_map_object(struct link_map *loader, const char *name, int type,
     counter++;
   }
 
-  return real_dl_map_object(loader, name, type, trace_mode, mode, nsid, arg7);
+  return real_dl_map_object(loader, name, type, trace_mode, mode, nsid, scope);
 }
 
 int sabre_clock_gettime(clockid_t clockid, struct timespec *tp) {
@@ -337,7 +330,7 @@ void setup_sbr_premain(sbr_icept_reg_fn fn_icept_reg) {
                                     .fn_name = "_dl_map_object",
                                     .icept_callback =
                                         elf_deps_2_icept_callback};
-  fn_icept_reg(&elf_deps_2);
+  register_function_intercept_with_stack_arg(&elf_deps_2);
   sbr_fn_icept_struct vdso_guard = {.lib_name = "libc",
                                     .fn_name = "__clock_gettime",
                                     .icept_callback =
