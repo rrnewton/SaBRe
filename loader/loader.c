@@ -217,7 +217,6 @@ static int parse_shebang(const char *client_path,
   }
   FILE *f = fopen(client_path, "r");
   if (f == NULL) {
-    fclose(f);
     return 0;
   }
 
