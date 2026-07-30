@@ -9,6 +9,9 @@
 #define _GNU_SOURCE
 #endif
 #include <assert.h>
+#ifdef __x86_64__
+#include <asm/processor-flags.h>
+#endif
 #include <dlfcn.h>
 #include <err.h>
 #include <fcntl.h>
@@ -94,6 +97,9 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
     // call syscall handler with proper arguments
     greg_t *regs = ctx->uc_mcontext.gregs;
     uintptr_t ret_addr = regs[REG_RIP] + 2;
+    // Fault delivery sets RF in the saved frame so the faulting instruction
+    // can be resumed. It was not present in the guest's pre-SYSCALL flags.
+    greg_t syscall_rflags = regs[REG_EFL] & ~X86_EFLAGS_RF;
     // simulate a syscall stack frame, as would be built by handle_syscall
     void *wrapper_sp =
         (void *)((intptr_t)&ret_addr - get_offsetof_syscall_return_address());
@@ -103,8 +109,10 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
     regs[REG_RAX] = runtime_syscall_router(
         regs[REG_RAX], regs[REG_RDI], regs[REG_RSI], regs[REG_RDX],
         regs[REG_R10], regs[REG_R8], regs[REG_R9], wrapper_sp);
+    regs[REG_RCX] = ret_addr;
+    regs[REG_R11] = syscall_rflags;
 #ifdef __NX_INTERCEPT_RDTSC
-  // TODO-HUMAN-REVIEW(PR-2): Review deterministic RDTSCP SIGILL restoration.
+    // TODO-HUMAN-REVIEW(PR-2): Review deterministic RDTSCP SIGILL restoration.
   } else if (faulting_insn == 0x0B0F || // RDTSC marker
              faulting_insn == 0x0C0F) { // RDTSCP marker
     greg_t *regs = ctx->uc_mcontext.gregs;
