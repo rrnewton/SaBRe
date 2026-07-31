@@ -17,6 +17,7 @@
 #include "handle_syscall.h"
 #include "handle_syscall_loader.h"
 #include "handle_vdso.h"
+#include "rewriter_safe_insn.h"
 #include "rewriter_tools.h"
 #include "x86_decoder.h"
 
@@ -25,27 +26,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-static inline bool is_safe_insn(unsigned short insn) {
-  /* Check if the instruction has no unexpected side-effects. If so, it can
-     be safely relocated from the function that we are patching into the
-     out-of-line scratch space that we are setting up. This is often necessary
-     to make room for the JMP into the scratch space. */
-  return ((insn & 0x7) < 0x6 &&
-          (insn & 0xF0) < 0x40
-              /* ADD, OR, ADC, SBB, AND, SUB, XOR, CMP */) ||
-         insn == 0x63 /* MOVSXD */ ||
-         (insn >= 0x80 && insn <= 0x8E /* ADD, OR, ADC,
-         SBB, AND, SUB, XOR, CMP, TEST, XCHG, MOV, LEA */) ||
-         (insn == 0x90) || /* NOP */
-         (insn >= 0xA0 && insn <= 0xA9) /* MOV, TEST */ ||
-         (insn >= 0xB0 && insn <= 0xBF /* MOV */) ||
-         (insn >= 0xC0 && insn <= 0xC1) || /* Bit Shift */
-         (insn >= 0xD0 && insn <= 0xD3) || /* Bit Shift */
-         (insn >= 0xC6 && insn <= 0xC7 /* MOV */) ||
-         (insn == 0xF7) /* TEST, NOT, NEG, MUL, IMUL, DIV, IDIV */ ||
-         (insn >= 0xF19 && insn <= 0xF1F) /* long NOP */;
-}
 
 #define TRAMPOLINE_MAX_DISTANCE (1536 << 20)
 

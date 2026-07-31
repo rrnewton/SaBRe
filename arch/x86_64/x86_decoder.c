@@ -170,21 +170,89 @@ unsigned short next_inst(const char **ip, bool is64bit, bool *has_prefix,
     found_prefix = true;
   }
 no_more_prefixes:
-  if (has_prefix) {
-    *has_prefix = found_prefix;
-  }
   if (rex & REX_W) {
     operand_width = 8;
   }
   unsigned char type;
   unsigned short insn = byte;
   unsigned int idx = 0;
-  if (byte == 0x0F) {
+  unsigned int vector_map = 0;
+  bool vector_encoded = false;
+  bool vector_prefix_unambiguous = is64bit;
+  if (!is64bit && (byte == 0xC4 || byte == 0xC5 || byte == 0x62)) {
+    // In 32-bit mode the vector prefixes overlap LES, LDS, and BOUND. A
+    // Mod=11 payload distinguishes the vector encoding from those opcodes.
+    vector_prefix_unambiguous = (*insn_ptr & 0xC0) == 0xC0;
+  }
+  if (byte == 0xC5 && vector_prefix_unambiguous) {
+    // Two-byte VEX always selects the legacy 0F opcode map. In 64-bit mode
+    // LDS is unavailable; in 32-bit mode Mod=11 distinguishes VEX from LDS.
+    found_prefix = true;
+    vector_encoded = true;
+    vector_map = 1;
+    insn_ptr++; // Skip the second VEX byte.
+    byte = *insn_ptr++;
+    insn = 0xC500 | byte;
+  } else if (byte == 0xC4 && vector_prefix_unambiguous) {
+    // Three-byte VEX encodes its opcode map in m-mmmm of the first payload
+    // byte. LES is unavailable in 64-bit mode; Mod=11 distinguishes 32-bit
+    // VEX from LES.
+    found_prefix = true;
+    vector_encoded = true;
+    vector_map = *insn_ptr & 0x1F;
+    insn_ptr += 2; // Skip both VEX payload bytes.
+    byte = *insn_ptr++;
+    insn = 0xC400 | byte;
+  } else if (byte == 0x62 && vector_prefix_unambiguous) {
+    // EVEX extends VEX with a third payload byte and a two-bit opcode map.
+    // BOUND is unavailable in 64-bit mode; Mod=11 preserves 32-bit BOUND.
+    found_prefix = true;
+    vector_encoded = true;
+    vector_map = *insn_ptr & 0x03;
+    insn_ptr += 3;
+    byte = *insn_ptr++;
+    insn = 0x6200 | byte;
+  } else if (byte == 0x0F) {
     byte = *insn_ptr++;
     insn = (insn << 8) | byte;
     idx = 256;
   }
-  type = opcode_types[idx + byte];
+  if (has_prefix) {
+    *has_prefix = found_prefix;
+  }
+  if (vector_map == 2) {
+    // VEX/EVEX 0F38 instructions carry a ModR/M byte.
+    type = MOD_RM | 1;
+  } else if (vector_map == 3) {
+    // VEX/EVEX 0F3A instructions carry ModR/M plus an imm8.
+    type = MOD_RM | IMM_BYTE | 1;
+  } else if (vector_map == 1) {
+    // Most VEX/EVEX 0F instructions retain their legacy operand shape. These
+    // vector forms add an imm8 where the old table is incomplete or describes
+    // a non-vector legacy opcode.
+    switch (byte) {
+    case 0x70: // VPSHUFD/VPSHUFHW/VPSHUFLW
+    case 0x71: // VPSRLW/VPSRAW/VPSLLW immediate groups
+    case 0x72: // VPSRLD/VPSRAD/VPSLLD immediate groups
+    case 0x73: // VPSRLQ/VPSLLQ/VPSRLDQ/VPSLLDQ immediate groups
+    case 0xC2: // VCMPPD/VCMPPS/VCMPSD/VCMPSS
+    case 0xC4: // VPINSRW
+    case 0xC5: // VPEXTRW
+    case 0xC6: // VSHUFPD/VSHUFPS
+      type = MOD_RM | IMM_BYTE | 1;
+      break;
+    default:
+      type = opcode_types[256 + byte];
+      break;
+    }
+  } else if (vector_encoded) {
+    // Reserved vector maps still consume the full prefix and opcode. Their
+    // remaining operand shape is unknown, matching the decoder's legacy
+    // fail-soft behavior without misclassifying the opcode itself.
+    type = 0;
+  } else {
+    type = opcode_types[idx + byte];
+  }
   bool found_mod_rm = false;
   bool found_group = false;
   bool found_sib = false;
