@@ -29,7 +29,49 @@
 extern struct region *rb_insert_region(struct library *library,
                                        ElfW(Addr) offset, struct rb_node *node);
 
+static void check_rel32_relocation(unsigned char opcode, bool prefixed) {
+  char original[6] = {0};
+  char relocated[6] = {0};
+  size_t instruction_length = prefixed ? 6 : 5;
+  size_t opcode_offset = prefixed ? 1 : 0;
+  size_t displacement_offset = instruction_length - sizeof(int32_t);
+  if (prefixed)
+    original[0] = 0x66;
+  original[opcode_offset] = (char)opcode;
+  int32_t original_displacement = 0x1234;
+  memcpy(original + displacement_offset, &original_displacement,
+         sizeof(original_displacement));
+
+  struct s_code code = {
+      .addr = original,
+      .len = instruction_length,
+      .insn = opcode,
+      .is_ip_relative = false,
+  };
+  copy_rel32(relocated, &code);
+
+  int32_t relocated_displacement;
+  memcpy(&relocated_displacement, relocated + displacement_offset,
+         sizeof(relocated_displacement));
+  assert(memcmp(original, relocated, displacement_offset) == 0);
+  assert((intptr_t)(original + instruction_length) + original_displacement ==
+         (intptr_t)(relocated + instruction_length) + relocated_displacement);
+}
+
+static void test_rel32_relocation(void) {
+  check_rel32_relocation(0xE8, false);
+  check_rel32_relocation(0xE8, true);
+  check_rel32_relocation(0xE9, false);
+  check_rel32_relocation(0xE9, true);
+}
+
 int main(int argc, char **argv, char **envp) {
+  if (argc == 2 && strcmp(argv[1], "--test-rel32-relocation") == 0) {
+    test_rel32_relocation();
+    return 0;
+  }
+
+  assert(argc == 3);
   //  Take vdso elf file as first argument
   char *vdso = argv[1];
 

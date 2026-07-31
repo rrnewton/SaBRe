@@ -455,7 +455,9 @@ static inline void copy_postamble(void *dest, struct s_code code[],
   // fixing eventual instructions that use the RIP register
   void *curr = dest;
   for (int insn = 0; insn <= second; insn++) {
-    if (code[insn].is_ip_relative || code[insn].insn == 0x0f84 /* JE */) {
+    if (code[insn].is_ip_relative || code[insn].insn == 0x0f84 /* JE */ ||
+        code[insn].insn == 0xE8 /* CALL */ ||
+        code[insn].insn == 0xE9 /* JMP */) {
       bool has_prefix;
       char *rex_ptr;
       char *mod_rm_ptr;
@@ -657,6 +659,11 @@ static inline void copy_postamble(void *dest, struct s_code code[],
 
         break;
       }
+      case 0xE8: // CALL rel32
+      case 0xE9: // JMP rel32
+        copy_rel32(curr, &code[insn]);
+        curr += code[insn].len;
+        break;
       default:
         _nx_fatal_printf("vDSO RIP relative instruction not supported: 0x%x\n",
                          code[insn].insn);

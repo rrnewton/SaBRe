@@ -12,7 +12,9 @@
 #include "rbtree.h"
 #include "rewriter_api.h"
 
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 
 struct branch_target {
@@ -21,6 +23,26 @@ struct branch_target {
 };
 
 #define rb_entry_target(node) rb_entry((node), struct branch_target, rb_target)
+
+static inline void copy_rel32(void *dest, const struct s_code *code) {
+  if (code->len < 1 + (int)sizeof(int32_t))
+    _nx_fatal_printf("invalid rel32 instruction length");
+  size_t displacement_offset = code->len - sizeof(int32_t);
+  int32_t original_displacement;
+  memcpy(&original_displacement, code->addr + displacement_offset,
+         sizeof(original_displacement));
+  intptr_t original_target =
+      (intptr_t)(code->addr + code->len) + (intptr_t)original_displacement;
+  intptr_t relocated_displacement =
+      original_target - (intptr_t)((char *)dest + code->len);
+  if (relocated_displacement < INT32_MIN || relocated_displacement > INT32_MAX)
+    _nx_fatal_printf("relative branch target exceeds rel32 range");
+
+  int32_t encoded_displacement = (int32_t)relocated_displacement;
+  memcpy(dest, code->addr, code->len);
+  memcpy((char *)dest + displacement_offset, &encoded_displacement,
+         sizeof(encoded_displacement));
+}
 
 /**
  * Returns a pointer pointing to the first target whose address does not compare
