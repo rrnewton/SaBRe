@@ -29,7 +29,40 @@
 extern struct region *rb_insert_region(struct library *library,
                                        ElfW(Addr) offset, struct rb_node *node);
 
+static void check_rel32_relocation(unsigned char opcode) {
+  char original[5] = {(char)opcode};
+  char relocated[5] = {0};
+  int32_t original_displacement = 0x1234;
+  memcpy(original + 1, &original_displacement, sizeof(original_displacement));
+
+  struct s_code code = {
+      .addr = original,
+      .len = sizeof(original),
+      .insn = opcode,
+      .is_ip_relative = false,
+  };
+  copy_rel32(relocated, &code, 1);
+
+  int32_t relocated_displacement;
+  memcpy(&relocated_displacement, relocated + 1,
+         sizeof(relocated_displacement));
+  assert(relocated[0] == (char)opcode);
+  assert((intptr_t)(original + sizeof(original)) + original_displacement ==
+         (intptr_t)(relocated + sizeof(relocated)) + relocated_displacement);
+}
+
+static void test_rel32_relocation(void) {
+  check_rel32_relocation(0xE8);
+  check_rel32_relocation(0xE9);
+}
+
 int main(int argc, char **argv, char **envp) {
+  if (argc == 2 && strcmp(argv[1], "--test-rel32-relocation") == 0) {
+    test_rel32_relocation();
+    return 0;
+  }
+
+  assert(argc == 3);
   //  Take vdso elf file as first argument
   char *vdso = argv[1];
 
