@@ -661,7 +661,7 @@ static inline void copy_postamble(void *dest, struct s_code code[],
       }
       case 0xE8: // CALL rel32
       case 0xE9: // JMP rel32
-        copy_rel32(curr, &code[insn], 1);
+        copy_rel32(curr, &code[insn]);
         curr += code[insn].len;
         break;
       default:

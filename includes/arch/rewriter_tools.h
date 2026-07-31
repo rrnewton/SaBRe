@@ -24,8 +24,10 @@ struct branch_target {
 
 #define rb_entry_target(node) rb_entry((node), struct branch_target, rb_target)
 
-static inline void copy_rel32(void *dest, const struct s_code *code,
-                              size_t displacement_offset) {
+static inline void copy_rel32(void *dest, const struct s_code *code) {
+  if (code->len < 1 + (int)sizeof(int32_t))
+    _nx_fatal_printf("invalid rel32 instruction length");
+  size_t displacement_offset = code->len - sizeof(int32_t);
   int32_t original_displacement;
   memcpy(&original_displacement, code->addr + displacement_offset,
          sizeof(original_displacement));

@@ -29,31 +29,40 @@
 extern struct region *rb_insert_region(struct library *library,
                                        ElfW(Addr) offset, struct rb_node *node);
 
-static void check_rel32_relocation(unsigned char opcode) {
-  char original[5] = {(char)opcode};
-  char relocated[5] = {0};
+static void check_rel32_relocation(unsigned char opcode, bool prefixed) {
+  char original[6] = {0};
+  char relocated[6] = {0};
+  size_t instruction_length = prefixed ? 6 : 5;
+  size_t opcode_offset = prefixed ? 1 : 0;
+  size_t displacement_offset = instruction_length - sizeof(int32_t);
+  if (prefixed)
+    original[0] = 0x66;
+  original[opcode_offset] = (char)opcode;
   int32_t original_displacement = 0x1234;
-  memcpy(original + 1, &original_displacement, sizeof(original_displacement));
+  memcpy(original + displacement_offset, &original_displacement,
+         sizeof(original_displacement));
 
   struct s_code code = {
       .addr = original,
-      .len = sizeof(original),
+      .len = instruction_length,
       .insn = opcode,
       .is_ip_relative = false,
   };
-  copy_rel32(relocated, &code, 1);
+  copy_rel32(relocated, &code);
 
   int32_t relocated_displacement;
-  memcpy(&relocated_displacement, relocated + 1,
+  memcpy(&relocated_displacement, relocated + displacement_offset,
          sizeof(relocated_displacement));
-  assert(relocated[0] == (char)opcode);
-  assert((intptr_t)(original + sizeof(original)) + original_displacement ==
-         (intptr_t)(relocated + sizeof(relocated)) + relocated_displacement);
+  assert(memcmp(original, relocated, displacement_offset) == 0);
+  assert((intptr_t)(original + instruction_length) + original_displacement ==
+         (intptr_t)(relocated + instruction_length) + relocated_displacement);
 }
 
 static void test_rel32_relocation(void) {
-  check_rel32_relocation(0xE8);
-  check_rel32_relocation(0xE9);
+  check_rel32_relocation(0xE8, false);
+  check_rel32_relocation(0xE8, true);
+  check_rel32_relocation(0xE9, false);
+  check_rel32_relocation(0xE9, true);
 }
 
 int main(int argc, char **argv, char **envp) {
