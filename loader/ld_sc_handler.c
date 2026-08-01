@@ -226,8 +226,9 @@ long arch_set_fs_handler(unsigned long addr) {
         *(uintptr_t *)(loader_tls_addr + stack_guard_tls_offset);
     *(uintptr_t *)(client_tls_addr + stack_guard_tls_offset) =
         loader_stack_guard_value;
-  } else {
-    _nx_fatal_printf("ARCH_SET_FS called more than once from client\n");
+  } else if (client_tls_addr != addr) {
+    _nx_fatal_printf(
+        "ARCH_SET_FS attempted to replace initialized client TLS\n");
   }
 
   // We can't forward ARCH_SET_FS to the plugin. If the plugin uses locks
