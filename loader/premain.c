@@ -46,12 +46,9 @@ static clock_gettime_fn real_clock_gettime;
 // that we can safely use arbitrary function calls to client libraries as GOT
 // and all that jazz is ready.
 // TODO(andronat): Write a tests that check client always gets client argv.
-static void preinit_shim_init_sbr_plugin(int argc, char **argv, char **env) {
-  unreferenced_var(argc);
-  unreferenced_var(argv);
-  unreferenced_var(env);
-
-  load_sabre_tls();
+static void init_sbr_plugin(bool switch_client_tls) {
+  if (switch_client_tls)
+    load_sabre_tls();
 
   uintptr_t lib_base = first_region(abs_plugin_path);
   if (lib_base == 0)
@@ -80,7 +77,8 @@ static void preinit_shim_init_sbr_plugin(int argc, char **argv, char **env) {
   assert(valid == true && "No symbol 'is_vdso_ready'");
   is_vdso_ready = (void *)lib_base + sym_addr;
 
-  load_client_tls();
+  if (switch_client_tls)
+    load_client_tls();
 
   // TODO(andronat): We need to split plugins into loadtime and runtime. In case
   // of splitting, how do we transfer state between loadtime and runtime
@@ -116,6 +114,16 @@ static void preinit_shim_init_sbr_plugin(int argc, char **argv, char **env) {
 
   exit_plugin();
 }
+
+static void preinit_shim_init_sbr_plugin(int argc, char **argv, char **env) {
+  unreferenced_var(argc);
+  unreferenced_var(argv);
+  unreferenced_var(env);
+
+  init_sbr_plugin(true);
+}
+
+void init_sbr_static_plugin(void) { init_sbr_plugin(false); }
 
 static ElfW(Dyn) new_dyn_entries[2] = {{.d_tag = DT_PREINIT_ARRAY},
                                        {.d_tag = DT_PREINIT_ARRAYSZ}};
