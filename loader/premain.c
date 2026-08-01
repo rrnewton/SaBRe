@@ -99,7 +99,7 @@ static void init_sbr_plugin(bool switch_client_tls) {
               &post_load, abs_sabre_path, abs_client_path);
 
   if (post_load != NULL)
-    post_load(NULL);
+    post_load(!switch_client_tls);
 
   // Rewrite vDSO handlers as they cannot be switched dynamically.
   // TODO: Rewriting the vDSO functions for a second time didn't work. The
