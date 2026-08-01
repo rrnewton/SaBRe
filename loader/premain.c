@@ -97,6 +97,7 @@ static void preinit_shim_init_sbr_plugin(int argc, char **argv, char **env) {
               &plugin_vdso_callback, &plugin_sc_handler,
 #ifdef __NX_INTERCEPT_RDTSC
               &plugin_rdtsc_handler,
+              &plugin_cpuid_handler,
 #endif
               &post_load, abs_sabre_path, abs_client_path);
 
