@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define SBR_BACKEND_STATS_ENV "REVERIE_SABRE_BACKEND_STATS_FD"
@@ -50,6 +51,19 @@ struct sbr_backend_stats {
   uint64_t patch_routes[SBR_PATCH_ROUTE_COUNT];
   uint64_t slow_paths[SBR_SLOW_PATH_COUNT];
 };
+
+_Static_assert(sizeof(struct sbr_backend_stats) == 400,
+               "SaBRe backend stats ABI size changed");
+_Static_assert(offsetof(struct sbr_backend_stats, candidate_rips) == 16,
+               "SaBRe backend stats counter offset changed");
+_Static_assert(offsetof(struct sbr_backend_stats, instruction_lengths) == 56,
+               "SaBRe backend stats length-bucket offset changed");
+_Static_assert(offsetof(struct sbr_backend_stats, straddle_after) == 176,
+               "SaBRe backend stats straddle-bucket offset changed");
+_Static_assert(offsetof(struct sbr_backend_stats, patch_routes) == 296,
+               "SaBRe backend stats route offset changed");
+_Static_assert(offsetof(struct sbr_backend_stats, slow_paths) == 320,
+               "SaBRe backend stats slow-path offset changed");
 
 void sbr_backend_stats_init(void);
 void sbr_backend_stats_record_patch(void *rip, unsigned instruction_length,
