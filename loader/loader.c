@@ -33,6 +33,7 @@
 #include "elf_loading.h"
 #include "global_vars.h"
 #include "ld_sc_handler.h"
+#include "loader/backend_stats.h"
 #include "macros.h"
 #include "plugins/sbr_api_defs.h"
 #include "premain.h"
@@ -106,6 +107,10 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
   size_t instruction_len = 2;
   // WARNING endianness
   if (faulting_insn == 0xFF0F) { // syscall
+    sbr_backend_stats_record_slow_path(
+        sbr_backend_stats_is_rewrite_sigill_site(info->si_addr)
+            ? SBR_SLOW_REWRITE_SIGILL_DISPATCH
+            : SBR_SLOW_PTRACE_INSTALLED_SIGILL_DISPATCH);
     // call syscall handler with proper arguments
     greg_t *regs = ctx->uc_mcontext.gregs;
     uintptr_t ret_addr = regs[REG_RIP] + 2;
@@ -128,6 +133,9 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
     // TODO-HUMAN-REVIEW(PR-2): Review deterministic RDTSCP SIGILL restoration.
   } else if (faulting_insn == 0x0B0F || // RDTSC marker
              faulting_insn == 0x0C0F) { // RDTSCP marker
+    sbr_backend_stats_record_slow_path(faulting_insn == 0x0B0F
+                                           ? SBR_SLOW_RDTSC_SIGILL_DISPATCH
+                                           : SBR_SLOW_RDTSCP_SIGILL_DISPATCH);
     greg_t *regs = ctx->uc_mcontext.gregs;
     uint64_t tsc = (uint64_t)plugin_rdtsc_handler();
     regs[REG_RAX] = (uint32_t)tsc;
@@ -258,6 +266,7 @@ void load(int argc, char *argv[], void **new_entry, void **new_stack_top) {
   // decrease, and the potential to OOM if we allocate too many items.
   int ret = mallopt(M_MMAP_THRESHOLD, 0);
   assert(ret == 1);
+  sbr_backend_stats_init();
 
   stack_val_t *argv_null = (stack_val_t *)&argv[argc];
 

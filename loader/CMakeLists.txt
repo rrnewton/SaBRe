@@ -9,6 +9,7 @@ list(APPEND SABRE_COMPONENT_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/includes/loader)
 # Build library
 sabre_add_component(
   loader
+  backend_stats.c
   elf_loading.c
   ld_sc_handler.c
   loader.c

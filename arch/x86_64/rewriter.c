@@ -11,6 +11,7 @@
 #endif
 
 #include "loader/rewriter.h"
+#include "loader/backend_stats.h"
 #include "loader/global_vars.h"
 
 #include "handle_rdtsc.h"
@@ -268,6 +269,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #endif
         {
           memcpy(code[i].addr, "\x0F\xFF" /* UD0 */, 2);
+          if (code[i].insn == 0x0F05)
+            sbr_backend_stats_record_patch(code[i].addr, code[i].len,
+                                           SBR_PATCH_REWRITE_SIGILL_MARKER);
           goto replaced;
         }
       }
@@ -368,6 +372,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // Replace the system call with an unconditional jump to our new code.
       *code[first].addr = '\xE9'; // JMPQ
       *(int *)(code[first].addr + 1) = dest - (code[first].addr + 5);
+      if (code[i].insn == 0x0F05)
+        sbr_backend_stats_record_patch(code[i].addr, code[i].len,
+                                       SBR_PATCH_JUMP_TRAMPOLINE);
       _nx_debug_printf("patched %s at %p (scratch space at %p)\n",
                        (is_rdtscp ? "rdtscp"
                                   : (is_rdtsc ? "rdtsc" : "syscall")),
