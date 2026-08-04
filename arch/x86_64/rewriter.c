@@ -11,6 +11,7 @@
 #endif
 
 #include "loader/rewriter.h"
+#include "loader/backend_stats.h"
 #include "loader/global_vars.h"
 
 #include "handle_rdtsc.h"
@@ -112,10 +113,12 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #if defined(__NX_INTERCEPT_RDTSC) || defined(SBR_DEBUG)
     bool is_rdtsc = false;
     bool is_rdtscp = false;
+    bool is_cpuid = false;
 #endif
     if (code[i].insn == 0x0F05 /* SYSCALL */
 #ifdef __NX_INTERCEPT_RDTSC
         || ((is_rdtsc = (code[i].insn == 0x0F31)) /* RDTSC */ && !loader)
+        || ((is_cpuid = (code[i].insn == 0x0FA2)) /* CPUID */ && !loader)
         // AUTONOMOUS-BOT-IMPLEMENTED
         // TODO-HUMAN-REVIEW(PR-2): Review RDTSCP decoding and rewrite semantics.
         || ((is_rdtscp = code[i].insn == 0x0F01 && mod_rm != NULL &&
@@ -255,7 +258,11 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
         // handle in the signal handler. That's a lot slower than rewriting the
         // instruction with a jump, but it should only happen very rarely.
 #ifdef __NX_INTERCEPT_RDTSC
-        if (is_rdtscp) {
+        if (is_cpuid) {
+          memcpy(code[i].addr, "\x0F\x0A" /* Reserved UD */, 2);
+          memset(code[i].addr + 2, 0x90, code[i].len - 2);
+          goto replaced;
+        } else if (is_rdtscp) {
           memcpy(code[i].addr, "\x0F\x0C\x90" /* Reserved UD + NOP */, 3);
           // A supported prefix makes the decoded instruction longer than the
           // three-byte marker. Resume only through NOPs, never a stale opcode.
@@ -268,6 +275,9 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
 #endif
         {
           memcpy(code[i].addr, "\x0F\xFF" /* UD0 */, 2);
+          if (code[i].insn == 0x0F05)
+            sbr_backend_stats_record_patch(code[i].addr, code[i].len,
+                                           SBR_PATCH_REWRITE_SIGILL_MARKER);
           goto replaced;
         }
       }
@@ -354,8 +364,10 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       if (loader)
         entrypoint = handle_syscall_loader;
 #ifdef __NX_INTERCEPT_RDTSC
-      else if (is_rdtsc || is_rdtscp) {
-        entrypoint = is_rdtscp ? rdtscp_entrypoint : rdtsc_entrypoint;
+      else if (is_rdtsc || is_rdtscp || is_cpuid) {
+        entrypoint = is_cpuid ? cpuid_entrypoint
+                              : (is_rdtscp ? rdtscp_entrypoint
+                                          : rdtsc_entrypoint);
       }
 #endif
       else
@@ -368,9 +380,14 @@ static void patch_syscalls_in_func(struct library *lib, char *start, char *end,
       // Replace the system call with an unconditional jump to our new code.
       *code[first].addr = '\xE9'; // JMPQ
       *(int *)(code[first].addr + 1) = dest - (code[first].addr + 5);
+      if (code[i].insn == 0x0F05)
+        sbr_backend_stats_record_patch(code[i].addr, code[i].len,
+                                       SBR_PATCH_JUMP_TRAMPOLINE);
       _nx_debug_printf("patched %s at %p (scratch space at %p)\n",
-                       (is_rdtscp ? "rdtscp"
-                                  : (is_rdtsc ? "rdtsc" : "syscall")),
+                       (is_cpuid ? "cpuid"
+                                 : (is_rdtscp
+                                        ? "rdtscp"
+                                        : (is_rdtsc ? "rdtsc" : "syscall"))),
                        code[i].addr, dest);
     }
   replaced:
@@ -934,6 +951,8 @@ void patch_syscalls_in_range(struct library *lib, char *start, char *stop,
 #ifdef __NX_INTERCEPT_RDTSC
         || (ptr + 1 < stop && *ptr == '\x0F' &&
             ptr[1] == '\x31' /* RDTSC */)
+        || (ptr + 1 < stop && *ptr == '\x0F' &&
+            ptr[1] == '\xA2' /* CPUID */)
         // AUTONOMOUS-BOT-IMPLEMENTED
         // TODO-HUMAN-REVIEW(PR-2): Review RDTSCP quick-scan classification.
         || is_rdtscp

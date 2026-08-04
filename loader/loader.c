@@ -33,7 +33,9 @@
 #include "elf_loading.h"
 #include "global_vars.h"
 #include "ld_sc_handler.h"
+#include "loader/backend_stats.h"
 #include "macros.h"
+#include "maps.h"
 #include "plugins/sbr_api_defs.h"
 #include "premain.h"
 #ifdef __NX_INTERCEPT_RDTSC
@@ -42,6 +44,9 @@
 #include "arch/syscall_stackframe.h"
 
 #define MAX_BUF_SIZE PATH_MAX + 1024
+#ifdef __x86_64__
+#define SABRE_DYNAMIC_LINKER "/lib64/ld-linux-x86-64.so.2"
+#endif
 
 typedef uintptr_t __attribute__((may_alias)) stack_val_t;
 
@@ -57,11 +62,31 @@ sbr_sc_handler_fn plugin_sc_handler = NULL;
 sbr_icept_vdso_callback_fn vdso_callback = ld_vdso_callback;
 #ifdef __NX_INTERCEPT_RDTSC
 sbr_rdtsc_handler_fn plugin_rdtsc_handler;
+sbr_cpuid_handler_fn plugin_cpuid_handler;
 #endif
 calling_from_plugin_fn calling_from_plugin = NULL;
 enter_plugin_fn enter_plugin = NULL;
 exit_plugin_fn exit_plugin = NULL;
 is_vdso_ready_fn is_vdso_ready = NULL;
+
+#ifdef __x86_64__
+static __attribute__((noreturn)) void
+reexec_static_client_with_plugin(int argc, char **argv) {
+  char **loader_argv = calloc((size_t)argc + 4, sizeof(*loader_argv));
+  if (loader_argv == NULL)
+    err(EXIT_FAILURE, "Failed to allocate static client loader arguments");
+
+  loader_argv[0] = SABRE_DYNAMIC_LINKER;
+  loader_argv[1] = "--preload";
+  loader_argv[2] = abs_plugin_path;
+  loader_argv[3] = abs_sabre_path;
+  for (int i = 1; i < argc; ++i)
+    loader_argv[i + 3] = argv[i];
+
+  execv(SABRE_DYNAMIC_LINKER, loader_argv);
+  err(EXIT_FAILURE, "Failed to restart SaBRe with the static client plugin");
+}
+#endif
 
 static void register_function_intercept(const sbr_fn_icept_struct *r_struct,
                                         bool copy_first_stack_arg) {
@@ -106,6 +131,10 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
   size_t instruction_len = 2;
   // WARNING endianness
   if (faulting_insn == 0xFF0F) { // syscall
+    sbr_backend_stats_record_slow_path(
+        sbr_backend_stats_is_rewrite_sigill_site(info->si_addr)
+            ? SBR_SLOW_REWRITE_SIGILL_DISPATCH
+            : SBR_SLOW_PTRACE_INSTALLED_SIGILL_DISPATCH);
     // call syscall handler with proper arguments
     greg_t *regs = ctx->uc_mcontext.gregs;
     uintptr_t ret_addr = regs[REG_RIP] + 2;
@@ -128,6 +157,9 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
     // TODO-HUMAN-REVIEW(PR-2): Review deterministic RDTSCP SIGILL restoration.
   } else if (faulting_insn == 0x0B0F || // RDTSC marker
              faulting_insn == 0x0C0F) { // RDTSCP marker
+    sbr_backend_stats_record_slow_path(faulting_insn == 0x0B0F
+                                           ? SBR_SLOW_RDTSC_SIGILL_DISPATCH
+                                           : SBR_SLOW_RDTSCP_SIGILL_DISPATCH);
     greg_t *regs = ctx->uc_mcontext.gregs;
     uint64_t tsc = (uint64_t)plugin_rdtsc_handler();
     regs[REG_RAX] = (uint32_t)tsc;
@@ -136,6 +168,15 @@ static void sigill_handler(int sig __unused, siginfo_t *info, void *ucontext) {
       regs[REG_RCX] = 0;
       instruction_len = 3;
     }
+  } else if (faulting_insn == 0x0A0F) { // CPUID marker
+    greg_t *regs = ctx->uc_mcontext.gregs;
+    sbr_cpuid_result result =
+        plugin_cpuid_handler((uint32_t)regs[REG_RAX],
+                             (uint32_t)regs[REG_RCX]);
+    regs[REG_RAX] = result.eax;
+    regs[REG_RBX] = result.ebx;
+    regs[REG_RCX] = result.ecx;
+    regs[REG_RDX] = result.edx;
 #endif
   } else {
     // not from SaBRe, so use default handler
@@ -244,6 +285,8 @@ static int parse_shebang(const char *client_path,
 // Returns the address of entry point and also populates a pointer
 // for the top of the new stack
 void load(int argc, char *argv[], void **new_entry, void **new_stack_top) {
+  int process_argc = argc;
+  char **process_argv = argv;
   if (argc < 4) {
     print_usage();
     exit(EXIT_FAILURE);
@@ -258,6 +301,7 @@ void load(int argc, char *argv[], void **new_entry, void **new_stack_top) {
   // decrease, and the potential to OOM if we allocate too many items.
   int ret = mallopt(M_MMAP_THRESHOLD, 0);
   assert(ret == 1);
+  sbr_backend_stats_init();
 
   stack_val_t *argv_null = (stack_val_t *)&argv[argc];
 
@@ -315,9 +359,11 @@ void load(int argc, char *argv[], void **new_entry, void **new_stack_top) {
 
   // Separate client and plugin arguments.
   plugin_argc = client_path_idx - 1;
+  char *client_separator = argv[plugin_argc];
   argv[plugin_argc] = NULL;
   plugin_argv = (char **)malloc(sizeof(char *) * (plugin_argc + 1));
   memcpy(plugin_argv, argv, sizeof(char *) * (plugin_argc + 1));
+  argv[plugin_argc] = client_separator;
 
   // Skip plugin arguments
   argv += client_path_idx;
@@ -383,8 +429,13 @@ void load(int argc, char *argv[], void **new_entry, void **new_stack_top) {
     const char *libs[] = {"ld", NULL};
     memorymaps_rewrite_all(libs, client_path, true);
   } else {
-    // TODO(andronat): We don't support statically linked binaries for now.
-    assert(false);
+#ifdef __x86_64__
+    if (first_region(abs_plugin_path) == 0)
+      reexec_static_client_with_plugin(process_argc, process_argv);
+#else
+    errx(EXIT_FAILURE, "Static clients are unsupported on this architecture");
+#endif
+    init_sbr_static_plugin();
     entry = av_entry->a_un.a_val;
 
     // No dynamic libraries, rewrite the libraries know to have syscalls

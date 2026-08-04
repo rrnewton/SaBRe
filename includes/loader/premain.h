@@ -26,5 +26,6 @@ struct ld_link_map {
 };
 
 void setup_sbr_premain(sbr_icept_reg_fn);
+void init_sbr_static_plugin(void);
 
 #endif /* !PREMAIN_H */
