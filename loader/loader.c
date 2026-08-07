@@ -429,10 +429,19 @@ void load(int argc, char *argv[], void **new_entry, void **new_stack_top) {
     entry = av_entry->a_un.a_val;
 
     // No dynamic libraries, rewrite the libraries know to have syscalls
-    // The binary itself probably has syscalls too, re-write it
+    // The binary itself probably has syscalls too, re-write it.
+    //
+    // Match the client by its RESOLVED path. memorymaps_rewrite_all identifies
+    // the client image by `strcmp`-ing this argument against the pathnames in
+    // /proc/self/maps, and the kernel always reports those fully resolved. A
+    // client_path that traverses a symlink (or is relative) therefore never
+    // compares equal, so no syscall site in the static client is patched and
+    // the guest runs entirely uninstrumented -- silently, because a static
+    // client has no other library through which SaBRe could regain control.
+    // abs_client_path is the realpath() of client_path computed above.
     const char *libs[] = {"ld",         "libc",      "librt",
                           "libpthread", "libresolv", NULL};
-    memorymaps_rewrite_all(libs, client_path, false);
+    memorymaps_rewrite_all(libs, abs_client_path, false);
   }
 
   // Set up SIGILL handler for dealing with RDTSC instructions and system calls
